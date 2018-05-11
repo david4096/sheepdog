@@ -10,6 +10,7 @@ from sheepdog.utils import (
     lookup_project,
     is_project_public,
     get_indexd_state,
+    generate_s3_url,
 )
 
 from sheepdog.transactions.entity_base import EntityErrors
@@ -143,20 +144,6 @@ class FileUploadEntity(UploadEntity):
         """
         # entity_id is set to the node_id here
         node = super(FileUploadEntity, self).get_node_merge()
-
-        file_state = get_indexd_state(node.node_id, return_not_found=True)
-
-        # verify that update is allowed
-        if not self.is_updatable_file_node(node):
-            self.record_error(
-                ("This file is already in file_state '{}' and cannot be "
-                 "updated. The raw data exists in the file storage "
-                 "and modifying the Entity now is unsafe and may cause "
-                 "problems for any processes or users consuming "
-                 "this data.").format(file_state),
-                keys=['file_state'],
-                type=EntityErrors.INVALID_PERMISSIONS,
-            )
 
         self._populate_files_from_index()
         self._is_valid_index_id_for_graph()
@@ -304,7 +291,7 @@ class FileUploadEntity(UploadEntity):
         self._version_index(current_did=self.old_uuid, new_doc=new_doc)
 
     @staticmethod
-    def is_updatable_file_node(node):
+    def is_updatable_file_node(file_state):
         """
         Check that a node is a file that can be updated. True if:
 
@@ -323,8 +310,6 @@ class FileUploadEntity(UploadEntity):
             'uploaded',
             'validating',
         ]
-
-        file_state = get_indexd_state(node.node_id, return_not_found=True)
 
         if file_state and file_state not in allowed_states:
             return False
@@ -574,39 +559,3 @@ class FileUploadEntity(UploadEntity):
 
     def _version_index(self, **kwargs):
         return self.transaction.indexd.add_version(**kwargs)
-
-
-def generate_s3_url(host, bucket, program, project, uuid, file_name):
-    """
-    Determine what the s3 url will be so we can assign file states before a file
-    is uploaded
-
-    Example:
-        s3://HOST/BUCKET/PROGRAM/PROJECT/UUID/FILENAME
-
-    Args:
-        host (str): s3 hostname
-        bucket (str): s3 bucket name
-        program (str): program name
-        project (str): project code
-        uuid (str): entity's did
-        file_name (str): entity's filename
-
-    Returns:
-        str: valid s3 url
-    """
-
-    if not host.startswith('s3://'):
-        host = 's3://' + host
-
-    if not host.endswith('/'):
-        host += '/'
-
-    if bucket.startswith('/'):
-        bucket = bucket[1:]
-
-    if not bucket.endswith('/'):
-        bucket += '/'
-
-    key = '{}/{}/{}/{}'.format(program, project, uuid, file_name)
-    return host + bucket + key
